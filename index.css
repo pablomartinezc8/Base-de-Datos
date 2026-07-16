@@ -1,0 +1,692 @@
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import React, { useState, useEffect } from 'react';
+import { 
+  FilePlus, 
+  RefreshCw, 
+  Check, 
+  Trash2, 
+  AlertTriangle, 
+  Calendar, 
+  Calculator, 
+  Layers, 
+  User, 
+  Clock, 
+  Edit3, 
+  ArrowLeft 
+} from 'lucide-react';
+import { Actividad, TipoRegistro, Disciplina, Etapa, Responsable, Critica, Prioridad, EstadoActividad, EntregablesOption } from '../types';
+import { DISCIPLINAS, ETAPAS, RESPONSABLES, TIPOS_REGISTRO, PRIORIDADES, ESTADOS, calculateDaysBetween, calculateAtraso, calculateAvancePlanificado } from '../data';
+
+interface FormViewProps {
+  selectedActivityId: number | null;
+  onSaveActivity: (actividad: Omit<Actividad, 'id' | 'duracion_planificada' | 'duracion_real' | 'atraso_dias' | 'avance_porcentaje_valor' | 'avance_planificado'> & { id?: number }) => void;
+  actividades: Actividad[];
+  onCancelEdit: () => void;
+  referenceDate: string;
+}
+
+export default function FormView({ 
+  selectedActivityId, 
+  onSaveActivity, 
+  actividades, 
+  onCancelEdit,
+  referenceDate
+}: FormViewProps) {
+  // Encontrar la actividad a editar
+  const editingActivity = selectedActivityId 
+    ? actividades.find(a => a.id === selectedActivityId) 
+    : null;
+
+  // Estados locales para el formulario
+  const [wbs, setWbs] = useState('');
+  const [tipoRegistro, setTipoRegistro] = useState<TipoRegistro>('Tarea');
+  const [tarea, setTarea] = useState('');
+  const [disciplina, setDisciplina] = useState<Disciplina | string>('GENERAL');
+  const [etapa, setEtapa] = useState<Etapa | string>('ING. BÁSICA');
+  const [responsable, setResponsable] = useState<Responsable | string>('Pablo Martinez');
+  const [critica, setCritica] = useState<Critica>('No');
+  const [prioridad, setPrioridad] = useState<Prioridad>('Media');
+  const [estado, setEstado] = useState<EstadoActividad>('No Iniciada');
+  const [inicioPlanificado, setInicioPlanificado] = useState('');
+  const [finPlanificado, setFinPlanificado] = useState('');
+  const [inicioReal, setInicioReal] = useState('');
+  const [finReal, setFinReal] = useState('');
+  const [valorTarea, setValorTarea] = useState<number>(1000);
+  const [entregables, setEntregables] = useState<EntregablesOption>('Sí');
+  const [observaciones, setObservaciones] = useState('');
+  
+  // Estado para el control del avance real manual
+  const [avanceReal, setAvanceReal] = useState<number>(0);
+  
+  // Estado para alertas y validación
+  const [validationErrors, setValidationErrors] = useState<string[]>([]);
+  const [successMsg, setSuccessMsg] = useState('');
+
+  // Sincronizar el formulario con la actividad en edición si aplica
+  useEffect(() => {
+    if (editingActivity) {
+      setWbs(editingActivity.wbs);
+      setTipoRegistro(editingActivity.tipo_registro);
+      setTarea(editingActivity.tarea);
+      setDisciplina(editingActivity.disciplina);
+      setEtapa(editingActivity.etapa);
+      setResponsable(editingActivity.responsable);
+      setCritica(editingActivity.critica);
+      setPrioridad(editingActivity.prioridad);
+      setEstado(editingActivity.estado);
+      setInicioPlanificado(editingActivity.inicio_planificado);
+      setFinPlanificado(editingActivity.fin_planificado);
+      setInicioReal(editingActivity.inicio_real || '');
+      setFinReal(editingActivity.fin_real || '');
+      setValorTarea(editingActivity.valor_tarea);
+      setEntregables(editingActivity.entregables);
+      setObservaciones(editingActivity.observaciones);
+      setAvanceReal(editingActivity.avance_real);
+    } else {
+      // Valores por defecto para nueva actividad
+      handleClearForm();
+    }
+    setValidationErrors([]);
+    setSuccessMsg('');
+  }, [editingActivity]);
+
+  // Al cambiar de Estado, sugerir Avance Real según reglas de validación (regla 10)
+  const handleEstadoChange = (newEstado: EstadoActividad) => {
+    setEstado(newEstado);
+    if (newEstado === 'Completada') {
+      setAvanceReal(100);
+      // Intentar rellenar fecha real si está vacía
+      if (!finReal) {
+        setFinReal(referenceDate);
+      }
+      if (!inicioReal) {
+        setInicioReal(inicioPlanificado || referenceDate);
+      }
+    } else if (newEstado === 'No Iniciada') {
+      setAvanceReal(0);
+    } else if (newEstado === 'En Curso' && avanceReal === 0) {
+      setAvanceReal(10); // Sugerir 10%
+    }
+  };
+
+  // Al cambiar Tipo Registro a Hito o Título, ajustar el valor de la tarea (regla 10 y regla 18)
+  const handleTipoRegistroChange = (newTipo: TipoRegistro) => {
+    setTipoRegistro(newTipo);
+    if (newTipo === 'Hito' || newTipo === 'Título') {
+      setValorTarea(0);
+    }
+    if (newTipo === 'Hito') {
+      // El hito suele tener la misma fecha de inicio y fin
+      if (inicioPlanificado) {
+        setFinPlanificado(inicioPlanificado);
+      }
+    }
+  };
+
+  // Cálculos automáticos calculados al vuelo en la UI para feedback visual
+  const liveDuracionPlanificada = calculateDaysBetween(inicioPlanificado, finPlanificado);
+  const liveDuracionReal = inicioReal && finReal ? calculateDaysBetween(inicioReal, finReal) : 0;
+  const liveAtrasoDias = calculateAtraso(estado, finPlanificado, finReal, referenceDate);
+  const liveAvancePlanificado = calculateAvancePlanificado(inicioPlanificado, finPlanificado, referenceDate);
+
+  // Limpiar formulario
+  const handleClearForm = () => {
+    setWbs('');
+    setTipoRegistro('Tarea');
+    setTarea('');
+    setDisciplina('GENERAL');
+    setEtapa('ING. BÁSICA');
+    setResponsable('Pablo Martinez');
+    setCritica('No');
+    setPrioridad('Media');
+    setEstado('No Iniciada');
+    setInicioPlanificado('');
+    setFinPlanificado('');
+    setInicioReal('');
+    setFinReal('');
+    setValorTarea(1000);
+    setEntregables('Sí');
+    setObservaciones('');
+    setAvanceReal(0);
+    setValidationErrors([]);
+  };
+
+  // Guardar/Actualizar
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const errors: string[] = [];
+
+    // Validaciones obligatorias (Regla 10)
+    if (!tarea.trim()) {
+      errors.push('La descripción de la tarea es obligatoria.');
+    }
+    if (!wbs.trim()) {
+      errors.push('El código jerárquico WBS es obligatorio.');
+    }
+    if (!inicioPlanificado) {
+      errors.push('Debe ingresar una fecha de inicio planificada.');
+    }
+    if (!finPlanificado) {
+      errors.push('Debe ingresar una fecha de fin planificada.');
+    }
+
+    // Regla de consistencia de fechas
+    if (inicioPlanificado && finPlanificado) {
+      if (new Date(finPlanificado) < new Date(inicioPlanificado)) {
+        errors.push('La fecha Fin Planificado no puede ser menor que Inicio Planificado.');
+      }
+    }
+    if (inicioReal && finReal) {
+      if (new Date(finReal) < new Date(inicioReal)) {
+        errors.push('La fecha Fin Real no puede ser menor que Inicio Real.');
+      }
+    }
+
+    // Rangos de avance
+    if (avanceReal < 0 || avanceReal > 100) {
+      errors.push('El Avance Real debe ser un porcentaje válido entre 0 y 100%.');
+    }
+
+    // Validaciones específicas de negocio por Estado (Regla 10)
+    if (estado === 'Completada' && avanceReal !== 100) {
+      errors.push('Si el Estado es Completada, el Avance Real debe ser estrictamente 100%.');
+    }
+    if (estado === 'No Iniciada' && avanceReal !== 0) {
+      // Permitimos guardar pero advertimos o forzamos a 0%
+      errors.push('Por regla del proyecto, si el Estado es No Iniciada, el Avance Real debe ser 0%. Modifica el estado a En Curso para cargar avance.');
+    }
+
+    if (errors.length > 0) {
+      setValidationErrors(errors);
+      // Scroll to errors container
+      const el = document.getElementById('errors-container');
+      if (el) el.scrollIntoView({ behavior: 'smooth' });
+      return;
+    }
+
+    // Enviar datos
+    onSaveActivity({
+      id: editingActivity?.id,
+      wbs: wbs.trim(),
+      tipo_registro: tipoRegistro,
+      tarea: tarea.trim(),
+      disciplina,
+      etapa,
+      responsable,
+      critica,
+      prioridad,
+      estado,
+      inicio_planificado: inicioPlanificado,
+      fin_planificado: finPlanificado,
+      inicio_real: inicioReal || undefined,
+      fin_real: finReal || undefined,
+      valor_tarea: Number(valorTarea) || 0,
+      entregables,
+      observaciones: observaciones.trim(),
+      avance_real: Number(avanceReal)
+    });
+
+    setSuccessMsg(editingActivity ? 'Actividad actualizada exitosamente' : 'Actividad creada y registrada exitosamente');
+    setValidationErrors([]);
+    
+    // Limpiar si es registro nuevo
+    if (!editingActivity) {
+      handleClearForm();
+    }
+  };
+
+  return (
+    <div className="space-y-6 animate-fade-in" id="form-view-container">
+      {/* Encabezado */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between bg-[#11141B] p-6 rounded-2xl border border-[#1E293B] shadow-sm gap-4">
+        <div>
+          <h2 className="text-xl font-bold text-[#E2E8F0] tracking-tight flex items-center gap-2">
+            {editingActivity ? (
+              <>
+                <Edit3 className="text-blue-500 h-5 w-5" />
+                Editar Actividad (ID: {editingActivity.id})
+              </>
+            ) : (
+              <>
+                <FilePlus className="text-blue-500 h-5 w-5" />
+                Registrar Nueva Actividad
+              </>
+            )}
+          </h2>
+          <p className="text-[#94A3B8] text-xs mt-1">
+            {editingActivity 
+              ? 'Modifica las propiedades de la actividad seleccionada. Los cálculos se actualizarán dinámicamente.'
+              : 'Agrega una nueva actividad a la planilla del proyecto. El WBS definirá su posición jerárquica.'}
+          </p>
+        </div>
+
+        {editingActivity && (
+          <button
+            onClick={onCancelEdit}
+            className="flex items-center gap-1.5 px-4 py-2 border border-[#1E293B] hover:bg-[#1E293B] text-[#E2E8F0] bg-[#0A0C10] rounded-xl text-xs font-bold transition-all cursor-pointer"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            Volver a la Planilla
+          </button>
+        )}
+      </div>
+
+      {/* ALERTAS DE ÉXITO O ERROR */}
+      {successMsg && (
+        <div className="p-4 bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 rounded-xl text-xs flex items-center justify-between font-medium">
+          <div className="flex items-center gap-2">
+            <Check className="h-4 w-4 text-emerald-400 bg-[#0A0C10] border border-emerald-500/30 rounded-full" />
+            <span>{successMsg}</span>
+          </div>
+          <button onClick={() => setSuccessMsg('')} className="text-emerald-500 hover:text-emerald-300 cursor-pointer">Cerrar</button>
+        </div>
+      )}
+
+      {validationErrors.length > 0 && (
+        <div className="p-5 bg-rose-500/10 border border-rose-500/20 text-rose-300 rounded-xl text-xs space-y-2" id="errors-container">
+          <p className="font-bold flex items-center gap-1.5 text-rose-400">
+            <AlertTriangle className="h-4 w-4 text-rose-500" />
+            Por favor corrige los siguientes errores de validación:
+          </p>
+          <ul className="list-disc pl-5 space-y-1 text-rose-300/90 font-medium">
+            {validationErrors.map((err, idx) => (
+              <li key={idx}>{err}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <form onSubmit={handleSubmit} className="grid grid-cols-1 lg:grid-cols-3 gap-6" id="activity-form">
+        {/* PANEL IZQUIERDO: FORMULARIO */}
+        <div className="lg:col-span-2 space-y-6 bg-[#11141B] p-6 rounded-2xl border border-[#1E293B] shadow-sm">
+          
+          {/* Bloque 1: Identificación e Información General */}
+          <div>
+            <h3 className="text-xs font-black uppercase text-[#94A3B8] tracking-wider mb-4 flex items-center gap-1.5 border-b border-[#1E293B] pb-2">
+              <Layers className="h-4 w-4 text-blue-500" />
+              1. Identificación e Información General
+            </h3>
+            
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              {/* WBS */}
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-[#E2E8F0]">WBS Jerárquico *</label>
+                <input
+                  type="text"
+                  placeholder="Ej: 1, 1.1, 2.3.1"
+                  value={wbs}
+                  onChange={(e) => setWbs(e.target.value)}
+                  className="w-full p-2.5 bg-[#0A0C10] border border-[#1E293B] rounded-lg text-xs focus:outline-hidden focus:ring-1 focus:ring-blue-500 text-[#E2E8F0] font-semibold"
+                />
+              </div>
+
+              {/* Tipo de Registro */}
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-[#E2E8F0]">Tipo de Registro *</label>
+                <select
+                  value={tipoRegistro}
+                  onChange={(e) => handleTipoRegistroChange(e.target.value as TipoRegistro)}
+                  className="w-full p-2.5 bg-[#0A0C10] border border-[#1E293B] rounded-lg text-xs focus:outline-hidden focus:ring-1 focus:ring-blue-500 text-[#E2E8F0] font-semibold"
+                >
+                  {TIPOS_REGISTRO.map(tr => (
+                    <option key={tr} value={tr}>{tr}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Tarea / Descripción */}
+              <div className="space-y-1 sm:col-span-1">
+                <label className="text-xs font-semibold text-[#E2E8F0]">Entregables *</label>
+                <select
+                  value={entregables}
+                  onChange={(e) => setEntregables(e.target.value as EntregablesOption)}
+                  className="w-full p-2.5 bg-[#0A0C10] border border-[#1E293B] rounded-lg text-xs focus:outline-hidden focus:ring-1 focus:ring-blue-500 text-[#E2E8F0] font-semibold"
+                >
+                  <option value="Sí">Sí (Requiere entrega física)</option>
+                  <option value="No">No (Actividad operativa/soporte)</option>
+                </select>
+              </div>
+
+              {/* Nombre de la actividad */}
+              <div className="space-y-1 sm:col-span-3">
+                <label className="text-xs font-semibold text-[#E2E8F0]">Descripción o Nombre de la Tarea *</label>
+                <input
+                  type="text"
+                  placeholder="Escribe el nombre de la actividad de ingeniería o construcción..."
+                  value={tarea}
+                  onChange={(e) => setTarea(e.target.value)}
+                  className="w-full p-2.5 bg-[#0A0C10] border border-[#1E293B] rounded-lg text-xs focus:outline-hidden focus:ring-1 focus:ring-blue-500 text-[#E2E8F0] font-semibold"
+                />
+              </div>
+
+              {/* Disciplina */}
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-[#E2E8F0]">Disciplina *</label>
+                <select
+                  value={disciplina}
+                  onChange={(e) => setDisciplina(e.target.value)}
+                  className="w-full p-2.5 bg-[#0A0C10] border border-[#1E293B] rounded-lg text-xs focus:outline-hidden focus:ring-1 focus:ring-blue-500 text-[#E2E8F0] font-semibold"
+                >
+                  {DISCIPLINAS.map(d => (
+                    <option key={d} value={d}>{d}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Etapa */}
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-[#E2E8F0]">Etapa del Proyecto *</label>
+                <select
+                  value={etapa}
+                  onChange={(e) => setEtapa(e.target.value)}
+                  className="w-full p-2.5 bg-[#0A0C10] border border-[#1E293B] rounded-lg text-xs focus:outline-hidden focus:ring-1 focus:ring-blue-500 text-[#E2E8F0] font-semibold"
+                >
+                  {ETAPAS.map(et => (
+                    <option key={et} value={et}>{et}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Responsable */}
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-[#E2E8F0]">Responsable Asignado *</label>
+                <select
+                  value={responsable}
+                  onChange={(e) => setResponsable(e.target.value)}
+                  className="w-full p-2.5 bg-[#0A0C10] border border-[#1E293B] rounded-lg text-xs focus:outline-hidden focus:ring-1 focus:ring-blue-500 text-[#E2E8F0] font-semibold"
+                >
+                  {RESPONSABLES.map(resp => (
+                    <option key={resp} value={resp}>{resp}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Crítica */}
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-[#E2E8F0]">¿Es Ruta Crítica? *</label>
+                <select
+                  value={critica}
+                  onChange={(e) => setCritica(e.target.value as Critica)}
+                  className="w-full p-2.5 bg-[#0A0C10] border border-[#1E293B] rounded-lg text-xs focus:outline-hidden focus:ring-1 focus:ring-blue-500 text-[#E2E8F0] font-semibold"
+                >
+                  <option value="Sí">⚠️ Sí, crítica</option>
+                  <option value="No">No crítica</option>
+                </select>
+              </div>
+
+              {/* Prioridad */}
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-[#E2E8F0]">Prioridad *</label>
+                <select
+                  value={prioridad}
+                  onChange={(e) => setPrioridad(e.target.value as Prioridad)}
+                  className="w-full p-2.5 bg-[#0A0C10] border border-[#1E293B] rounded-lg text-xs focus:outline-hidden focus:ring-1 focus:ring-blue-500 text-[#E2E8F0] font-semibold"
+                >
+                  {PRIORIDADES.map(prio => (
+                    <option key={prio} value={prio}>{prio}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Estado */}
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-[#E2E8F0]">Estado de Avance *</label>
+                <select
+                  value={estado}
+                  onChange={(e) => handleEstadoChange(e.target.value as EstadoActividad)}
+                  className="w-full p-2.5 bg-[#0A0C10] border border-[#1E293B] rounded-lg text-xs focus:outline-hidden focus:ring-1 focus:ring-blue-500 text-[#E2E8F0] font-semibold"
+                >
+                  {ESTADOS.map(est => (
+                    <option key={est} value={est}>{est}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          </div>
+
+          {/* Bloque 2: Fechas del Cronograma */}
+          <div>
+            <h3 className="text-xs font-black uppercase text-[#94A3B8] tracking-wider mb-4 flex items-center gap-1.5 border-b border-[#1E293B] pb-2">
+              <Calendar className="h-4 w-4 text-blue-500" />
+              2. Programación de Fechas (Planificado vs Real)
+            </h3>
+
+            <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+              {/* Inicio Planificado */}
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-[#E2E8F0]">Inicio Planificado *</label>
+                <input
+                  type="date"
+                  value={inicioPlanificado}
+                  onChange={(e) => setInicioPlanificado(e.target.value)}
+                  className="w-full p-2.5 bg-[#0A0C10] border border-[#1E293B] rounded-lg text-xs focus:outline-hidden focus:ring-1 focus:ring-blue-500 text-[#E2E8F0] font-mono font-semibold"
+                />
+              </div>
+
+              {/* Fin Planificado */}
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-[#E2E8F0]">Fin Planificado *</label>
+                <input
+                  type="date"
+                  value={finPlanificado}
+                  onChange={(e) => setFinPlanificado(e.target.value)}
+                  className="w-full p-2.5 bg-[#0A0C10] border border-[#1E293B] rounded-lg text-xs focus:outline-hidden focus:ring-1 focus:ring-blue-500 text-[#E2E8F0] font-mono font-semibold"
+                />
+              </div>
+
+              {/* Inicio Real */}
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-[#E2E8F0]">Inicio Real (Opcional)</label>
+                <input
+                  type="date"
+                  value={inicioReal}
+                  onChange={(e) => setInicioReal(e.target.value)}
+                  className="w-full p-2.5 bg-[#0A0C10] border border-[#1E293B] rounded-lg text-xs focus:outline-hidden focus:ring-1 focus:ring-blue-500 text-[#E2E8F0] font-mono"
+                />
+              </div>
+
+              {/* Fin Real */}
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-[#E2E8F0]">Fin Real (Opcional)</label>
+                <input
+                  type="date"
+                  value={finReal}
+                  onChange={(e) => setFinReal(e.target.value)}
+                  className="w-full p-2.5 bg-[#0A0C10] border border-[#1E293B] rounded-lg text-xs focus:outline-hidden focus:ring-1 focus:ring-blue-500 text-[#E2E8F0] font-mono"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Bloque 3: Valoración, Ponderación y Avance */}
+          <div>
+            <h3 className="text-xs font-black uppercase text-[#94A3B8] tracking-wider mb-4 flex items-center gap-1.5 border-b border-[#1E293B] pb-2">
+              <Clock className="h-4 w-4 text-blue-500" />
+              3. Valor de Tarea y Carga de Avance Real
+            </h3>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              {/* Valor de Tarea */}
+              <div className="space-y-1">
+                <div className="flex justify-between items-center">
+                  <label className="text-xs font-semibold text-[#E2E8F0]">Valor de Tarea ($)</label>
+                  <span className="text-[10px] text-[#94A3B8]">Ponderador general</span>
+                </div>
+                <input
+                  type="number"
+                  min="0"
+                  disabled={tipoRegistro === 'Hito' || tipoRegistro === 'Título'}
+                  value={valorTarea}
+                  onChange={(e) => setValorTarea(Number(e.target.value))}
+                  className="w-full p-2.5 bg-[#0A0C10] disabled:bg-[#1E293B]/20 disabled:text-slate-600 disabled:cursor-not-allowed border border-[#1E293B] rounded-lg text-xs focus:outline-hidden focus:ring-1 focus:ring-blue-500 text-[#E2E8F0] font-mono font-bold"
+                />
+              </div>
+
+              {/* Avance Real Manual */}
+              <div className="space-y-1 sm:col-span-2">
+                <div className="flex justify-between items-center">
+                  <label className="text-xs font-semibold text-[#E2E8F0]">Avance Real Cargado (%) *</label>
+                  <span className="text-xs font-bold text-[#E2E8F0]">{avanceReal}%</span>
+                </div>
+                
+                <div className="flex items-center gap-3">
+                  <input
+                    type="range"
+                    min="0"
+                    max="100"
+                    disabled={estado === 'No Iniciada' || estado === 'Completada'}
+                    value={avanceReal}
+                    onChange={(e) => setAvanceReal(Number(e.target.value))}
+                    className="flex-1 h-2 bg-[#0A0C10] rounded-lg appearance-none cursor-pointer accent-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                  />
+                  <input
+                    type="number"
+                    min="0"
+                    max="100"
+                    disabled={estado === 'No Iniciada' || estado === 'Completada'}
+                    value={avanceReal}
+                    onChange={(e) => setAvanceReal(Math.min(100, Math.max(0, Number(e.target.value))))}
+                    className="w-16 p-1.5 bg-[#0A0C10] disabled:bg-[#1E293B]/20 border border-[#1E293B] rounded-lg text-xs font-mono font-bold text-[#E2E8F0] text-center"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Bloque 4: Observaciones */}
+          <div>
+            <h3 className="text-xs font-black uppercase text-[#94A3B8] tracking-wider mb-2">4. Observaciones y Notas Técnicas</h3>
+            <textarea
+              placeholder="Escribe comentarios de avance, justificaciones de demoras o alcances específicos de esta actividad de ingeniería o construcción..."
+              value={observaciones}
+              onChange={(e) => setObservaciones(e.target.value)}
+              rows={3}
+              className="w-full p-3 bg-[#0A0C10] border border-[#1E293B] rounded-lg text-xs focus:outline-hidden focus:ring-1 focus:ring-blue-500 text-[#E2E8F0] font-medium"
+            />
+          </div>
+
+          {/* BOTONES DE CONTROL DE ENVÍO */}
+          <div className="flex flex-wrap items-center justify-between gap-3 pt-4 border-t border-[#1E293B]">
+            <button
+              type="button"
+              onClick={handleClearForm}
+              className="px-4 py-2 bg-[#0A0C10] hover:bg-[#1E293B] border border-[#1E293B] text-[#E2E8F0] rounded-xl text-xs font-bold transition-all cursor-pointer"
+            >
+              Limpiar Formulario
+            </button>
+
+            <div className="flex gap-2">
+              {editingActivity && (
+                <button
+                  type="button"
+                  onClick={onCancelEdit}
+                  className="px-4 py-2 border border-[#1E293B] hover:bg-[#1E293B] text-[#E2E8F0] bg-[#0A0C10] rounded-xl text-xs font-bold transition-all cursor-pointer"
+                >
+                  Cancelar Edición
+                </button>
+              )}
+              
+              <button
+                type="submit"
+                className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-[#E2E8F0] rounded-xl text-xs font-bold transition-all shadow-sm cursor-pointer"
+              >
+                {editingActivity ? 'Actualizar Actividad' : 'Guardar Actividad'}
+              </button>
+            </div>
+          </div>
+
+        </div>
+
+        {/* PANEL DERECHO: LIVE PREVIEW & CÁLCULOS AUTOMÁTICOS */}
+        <div className="space-y-6">
+          <div className="bg-[#11141B] text-[#E2E8F0] p-6 rounded-2xl border border-[#1E293B] shadow-md">
+            <h3 className="text-xs font-black uppercase text-[#94A3B8] tracking-wider mb-4 flex items-center gap-1.5 border-b border-[#1E293B] pb-2.5">
+              <Calculator className="h-4 w-4 text-emerald-400" />
+              Cálculos al Vuelo (Live Preview)
+            </h3>
+
+            <div className="space-y-5 text-xs">
+              {/* Duración Planificada */}
+              <div className="flex justify-between items-center border-b border-[#1E293B]/80 pb-2.5">
+                <span className="text-[#94A3B8] font-semibold">Duración Planificada</span>
+                <span className="font-mono text-base font-black text-emerald-400">
+                  {liveDuracionPlanificada > 0 ? `${liveDuracionPlanificada} días` : '0 días'}
+                </span>
+              </div>
+
+              {/* Duración Real */}
+              <div className="flex justify-between items-center border-b border-[#1E293B]/80 pb-2.5">
+                <span className="text-[#94A3B8] font-semibold">Duración Real</span>
+                <span className="font-mono text-base font-black text-blue-400">
+                  {liveDuracionReal > 0 ? `${liveDuracionReal} días` : '-'}
+                </span>
+              </div>
+
+              {/* Atraso en Días */}
+              <div className="flex justify-between items-center border-b border-[#1E293B]/80 pb-2.5">
+                <span className="text-[#94A3B8] font-semibold">Atraso Estimado</span>
+                {liveAtrasoDias > 0 ? (
+                  <span className="font-mono text-base font-black text-rose-400 bg-rose-500/10 px-2 py-0.5 rounded-sm">
+                    +{liveAtrasoDias} días
+                  </span>
+                ) : (
+                  <span className="font-mono text-[#94A3B8]">0 días</span>
+                )}
+              </div>
+
+              {/* Avance Planificado Calculado */}
+              <div className="flex justify-between items-center border-b border-[#1E293B]/80 pb-2.5">
+                <span className="text-[#94A3B8] font-semibold">Avance Planificado</span>
+                <span className="font-mono text-base font-black text-sky-400">
+                  {liveAvancePlanificado}%
+                </span>
+              </div>
+
+              {/* Avance Real Elegido */}
+              <div className="flex justify-between items-center pb-1">
+                <span className="text-[#94A3B8] font-semibold">Avance Real Definido</span>
+                <span className="font-mono text-base font-black text-emerald-400">
+                  {avanceReal}%
+                </span>
+              </div>
+
+              {/* Desvío Estimado para esta actividad */}
+              <div className="p-3 bg-[#0A0C10] rounded-xl border border-[#1E293B] text-[11px]">
+                <div className="flex justify-between items-center font-bold mb-1">
+                  <span>Desvío de Tarea:</span>
+                  <span className={avanceReal - liveAvancePlanificado >= 0 ? 'text-emerald-400' : 'text-rose-400'}>
+                    {avanceReal - liveAvancePlanificado > 0 ? '+' : ''}{avanceReal - liveAvancePlanificado}%
+                  </span>
+                </div>
+                <p className="text-[10px] text-[#94A3B8] leading-relaxed font-medium">
+                  {avanceReal - liveAvancePlanificado >= 0 
+                    ? 'La actividad está alineada o adelantada respecto al cronograma planificado.'
+                    : 'La actividad tiene desvío negativo respecto al cronograma planificado.'}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Tarjeta de Guías Rápidas */}
+          <div className="bg-blue-500/5 p-5 rounded-2xl border border-blue-500/10 text-xs text-blue-200 space-y-3">
+            <h4 className="font-black text-blue-400 flex items-center gap-1">
+              <Layers className="h-4 w-4 text-blue-500" />
+              GUÍA DE CARGA DEL PROYECTO
+            </h4>
+            <ul className="list-disc pl-4 space-y-1.5 text-[#94A3B8] font-medium leading-relaxed">
+              <li><strong>Estructura WBS</strong>: Utilice formato jerárquico como <code className="bg-blue-500/10 text-blue-300 font-bold px-1 rounded-sm">1.1</code> para ordenar las tareas en el cronograma.</li>
+              <li><strong>Hitos</strong>: El valor monetario de un Hito debe ser cero. Las fechas de inicio y fin son idénticas.</li>
+              <li><strong>Títulos</strong>: Sirven para agrupar fases principales del proyecto.</li>
+              <li><strong>Fechas Reales</strong>: Deje vacías si la actividad no ha comenzado. Al marcar como <code className="bg-blue-500/10 text-blue-300 font-bold px-1 rounded-sm">Completada</code>, se sugiere ingresar las fechas reales correspondientes.</li>
+            </ul>
+          </div>
+        </div>
+
+      </form>
+    </div>
+  );
+}

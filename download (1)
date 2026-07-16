@@ -1,0 +1,425 @@
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import React, { useState, useEffect, useMemo } from 'react';
+import { 
+  LayoutDashboard, 
+  FileSpreadsheet, 
+  FilePlus, 
+  CalendarRange, 
+  Settings, 
+  Menu, 
+  X, 
+  Activity, 
+  Briefcase, 
+  AlertTriangle, 
+  Clock, 
+  CheckCircle2, 
+  SlidersHorizontal 
+} from 'lucide-react';
+
+import { Actividad, ViewSection } from './types';
+import { getInitialActivities, updateCalculatedFields } from './data';
+import DashboardView from './components/DashboardView';
+import TableView from './components/TableView';
+import FormView from './components/FormView';
+import GanttView from './components/GanttView';
+import ConfigView from './components/ConfigView';
+
+export default function App() {
+  // --- ESTADOS PRINCIPALES ---
+  const [activeSection, setActiveSection] = useState<ViewSection>('dashboard');
+  const [referenceDate, setReferenceDate] = useState<string>('2026-07-16');
+  const [actividades, setActividades] = useState<Actividad[]>([]);
+  const [selectedActivityId, setSelectedActivityId] = useState<number | null>(null);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  // --- CARGA INICIAL (PERSISTENCIA LOCALSTORAGE) ---
+  useEffect(() => {
+    // 1. Cargar fecha de control
+    const savedDate = localStorage.getItem('pm_control_date');
+    const activeDate = savedDate || '2026-07-16';
+    if (savedDate) {
+      setReferenceDate(savedDate);
+    } else {
+      localStorage.setItem('pm_control_date', '2026-07-16');
+    }
+
+    // 2. Cargar actividades
+    const savedActivities = localStorage.getItem('pm_actividades');
+    if (savedActivities) {
+      try {
+        const parsed = JSON.parse(savedActivities) as Actividad[];
+        // Recalculamos al vuelo para garantizar consistencia con la fecha actual
+        const updated = updateCalculatedFields(parsed, activeDate);
+        setActividades(updated);
+        localStorage.setItem('pm_actividades', JSON.stringify(updated));
+      } catch (err) {
+        console.error('Error al parsear actividades de localStorage', err);
+        const initial = getInitialActivities(activeDate);
+        setActividades(initial);
+        localStorage.setItem('pm_actividades', JSON.stringify(initial));
+      }
+    } else {
+      // Si no hay datos, cargar la planilla de ejemplo con las actividades iniciales
+      const initial = getInitialActivities(activeDate);
+      setActividades(initial);
+      localStorage.setItem('pm_actividades', JSON.stringify(initial));
+    }
+  }, []);
+
+  // --- GUARDADO / ACTUALIZACIÓN EN STATE Y LOCALSTORAGE ---
+  const saveToStorage = (updatedList: Actividad[], currentRefDate: string) => {
+    const recalculated = updateCalculatedFields(updatedList, currentRefDate);
+    setActividades(recalculated);
+    localStorage.setItem('pm_actividades', JSON.stringify(recalculated));
+  };
+
+  // --- CONTROLADORES CRUD ---
+
+  // Registrar o actualizar actividad (especificaciones 1, 10 y 14)
+  const handleSaveActivity = (newActData: Omit<Actividad, 'id' | 'duracion_planificada' | 'duracion_real' | 'atraso_dias' | 'avance_porcentaje_valor' | 'avance_planificado'> & { id?: number }) => {
+    let updatedList: Actividad[] = [];
+
+    if (newActData.id !== undefined) {
+      // MODO EDICIÓN
+      updatedList = actividades.map(act => {
+        if (act.id === newActData.id) {
+          return {
+            ...act,
+            ...newActData,
+            updated_at: new Date().toISOString()
+          } as Actividad;
+        }
+        return act;
+      });
+      setSelectedActivityId(null); // Desmarcar edición
+      setActiveSection('tabla'); // Redireccionar a la planilla
+    } else {
+      // MODO NUEVO REGISTRO
+      const nextId = actividades.length > 0 ? Math.max(...actividades.map(a => a.id)) + 1 : 1;
+      const newActivityItem: Actividad = {
+        ...newActData,
+        id: nextId,
+        duracion_planificada: 0,
+        atraso_dias: 0,
+        avance_porcentaje_valor: 0,
+        avance_planificado: 0,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      };
+      updatedList = [...actividades, newActivityItem];
+      setActiveSection('tabla'); // Redireccionar a la planilla
+    }
+
+    saveToStorage(updatedList, referenceDate);
+  };
+
+  // Eliminar actividad
+  const handleDeleteActivity = (id: number) => {
+    const updatedList = actividades.filter(act => act.id !== id);
+    saveToStorage(updatedList, referenceDate);
+    if (selectedActivityId === id) {
+      setSelectedActivityId(null);
+    }
+  };
+
+  // Iniciar edición de una actividad
+  const handleStartEditActivity = (id: number) => {
+    setSelectedActivityId(id);
+    setActiveSection('formulario');
+  };
+
+  // Cancelar la edición activa
+  const handleCancelEdit = () => {
+    setSelectedActivityId(null);
+    setActiveSection('tabla');
+  };
+
+  // --- CONTROLADORES ADMINISTRATIVOS ---
+
+  // Actualizar fecha de control
+  const handleUpdateReferenceDate = (newDate: string) => {
+    setReferenceDate(newDate);
+    localStorage.setItem('pm_control_date', newDate);
+    // Forzar recálculo inmediato de toda la base de datos bajo la nueva fecha
+    if (actividades.length > 0) {
+      saveToStorage(actividades, newDate);
+    }
+  };
+
+  // Restablecer base de datos a ejemplo inicial
+  const handleResetToDemoData = () => {
+    const initial = getInitialActivities(referenceDate);
+    setActividades(initial);
+    localStorage.setItem('pm_actividades', JSON.stringify(initial));
+  };
+
+  // Vaciado de base de datos
+  const handleClearData = () => {
+    setActividades([]);
+    localStorage.setItem('pm_actividades', JSON.stringify([]));
+    setSelectedActivityId(null);
+  };
+
+  // Importar desde JSON externo
+  const handleImportData = (importedList: Actividad[]): boolean => {
+    try {
+      saveToStorage(importedList, referenceDate);
+      return true;
+    } catch (err) {
+      console.error(err);
+      return false;
+    }
+  };
+
+  // --- MÉTRICAS RÁPIDAS PARA EL SIDEBAR ---
+  const sidebarMetrics = useMemo(() => {
+    const total = actividades.length;
+    const completadas = actividades.filter(a => a.estado === 'Completada').length;
+    const atrasadas = actividades.filter(a => {
+      const isPast = a.fin_planificado && new Date(a.fin_planificado).getTime() < new Date(referenceDate).getTime();
+      return a.estado !== 'Completada' && isPast && a.avance_real < 100;
+    }).length;
+
+    return { total, completadas, atrasadas };
+  }, [actividades, referenceDate]);
+
+  return (
+    <div className="min-h-screen bg-[#0A0C10] flex flex-col md:flex-row text-[#E2E8F0] font-sans" id="app-root-container">
+      
+      {/* 1. SIDEBAR DE NAVEGACIÓN DESKTOP */}
+      <aside className="hidden md:flex flex-col w-64 bg-[#11141B] text-[#E2E8F0] border-r border-[#1E293B] shrink-0 select-none" id="desktop-sidebar">
+        {/* Marca/Header */}
+        <div className="p-6 border-b border-[#1E293B] flex items-center gap-3">
+          <div className="p-2 bg-blue-600 rounded-xl text-white shadow-xs">
+            <Activity className="h-5 w-5" />
+          </div>
+          <div>
+            <h1 className="text-sm font-bold text-white tracking-tight leading-none uppercase">Control Obra</h1>
+            <span className="text-[10px] text-[#94A3B8] font-bold uppercase tracking-wider">Planilla & Avance</span>
+          </div>
+        </div>
+
+        {/* Listado de Enlaces */}
+        <nav className="flex-1 px-4 py-6 space-y-1.5 text-xs font-semibold">
+          {/* Dashboard */}
+          <button
+            onClick={() => setActiveSection('dashboard')}
+            className={`w-full flex items-center justify-between px-4 py-3 rounded-xl transition-all cursor-pointer ${
+              activeSection === 'dashboard' 
+                ? 'bg-blue-600 text-white font-bold shadow-sm' 
+                : 'hover:bg-[#1E293B]/60 text-[#94A3B8] hover:text-[#E2E8F0]'
+            }`}
+          >
+            <div className="flex items-center gap-3">
+              <LayoutDashboard className="h-4.5 w-4.5" />
+              <span>Dashboard</span>
+            </div>
+          </button>
+
+          {/* Tabla de Actividades */}
+          <button
+            onClick={() => setActiveSection('tabla')}
+            className={`w-full flex items-center justify-between px-4 py-3 rounded-xl transition-all cursor-pointer ${
+              activeSection === 'tabla' 
+                ? 'bg-blue-600 text-white font-bold shadow-sm' 
+                : 'hover:bg-[#1E293B]/60 text-[#94A3B8] hover:text-[#E2E8F0]'
+            }`}
+          >
+            <div className="flex items-center gap-3">
+              <FileSpreadsheet className="h-4.5 w-4.5" />
+              <span>Actividades</span>
+            </div>
+            <span className="bg-[#1E293B] text-[#94A3B8] text-[10px] px-2 py-0.5 rounded-full font-bold">
+              {sidebarMetrics.total}
+            </span>
+          </button>
+
+          {/* Registrar Nueva Actividad */}
+          <button
+            onClick={() => {
+              setSelectedActivityId(null);
+              setActiveSection('formulario');
+            }}
+            className={`w-full flex items-center justify-between px-4 py-3 rounded-xl transition-all cursor-pointer ${
+              activeSection === 'formulario' && !selectedActivityId
+                ? 'bg-blue-600 text-white font-bold shadow-sm' 
+                : 'hover:bg-[#1E293B]/60 text-[#94A3B8] hover:text-[#E2E8F0]'
+            }`}
+          >
+            <div className="flex items-center gap-3">
+              <FilePlus className="h-4.5 w-4.5" />
+              <span>Nueva Actividad</span>
+            </div>
+          </button>
+
+          {/* Cronograma Gantt */}
+          <button
+            onClick={() => setActiveSection('cronograma')}
+            className={`w-full flex items-center justify-between px-4 py-3 rounded-xl transition-all cursor-pointer ${
+              activeSection === 'cronograma' 
+                ? 'bg-blue-600 text-white font-bold shadow-sm' 
+                : 'hover:bg-[#1E293B]/60 text-[#94A3B8] hover:text-[#E2E8F0]'
+            }`}
+          >
+            <div className="flex items-center gap-3">
+              <CalendarRange className="h-4.5 w-4.5" />
+              <span>Cronograma Gantt</span>
+            </div>
+          </button>
+
+          {/* Configuración */}
+          <button
+            onClick={() => setActiveSection('configuracion')}
+            className={`w-full flex items-center justify-between px-4 py-3 rounded-xl transition-all cursor-pointer ${
+              activeSection === 'configuracion' 
+                ? 'bg-blue-600 text-white font-bold shadow-sm' 
+                : 'hover:bg-[#1E293B]/60 text-[#94A3B8] hover:text-[#E2E8F0]'
+            }`}
+          >
+            <div className="flex items-center gap-3">
+              <Settings className="h-4.5 w-4.5" />
+              <span>Configuración</span>
+            </div>
+          </button>
+        </nav>
+
+        {/* Tarjeta de Resumen en Footer Sidebar */}
+        <div className="p-4 border-t border-[#1E293B] bg-[#11141B]/80 text-xs text-[#94A3B8] space-y-2">
+          <div className="flex justify-between items-center font-bold">
+            <span>Vencidos atrasados:</span>
+            <span className={sidebarMetrics.atrasadas > 0 ? 'text-rose-400 font-bold' : 'text-[#94A3B8]'}>
+              {sidebarMetrics.atrasadas}
+            </span>
+          </div>
+          <div className="flex justify-between items-center font-bold">
+            <span>Completadas:</span>
+            <span className="text-emerald-400">{sidebarMetrics.completadas} / {sidebarMetrics.total}</span>
+          </div>
+        </div>
+      </aside>
+
+      {/* 2. MENÚ HEADER RESPONSIVE PARA MÓVILES */}
+      <header className="md:hidden bg-[#11141B] text-[#E2E8F0] border-b border-[#1E293B] shrink-0 select-none z-50 sticky top-0" id="mobile-header">
+        <div className="p-4 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Activity className="h-5 w-5 text-blue-500" />
+            <h1 className="text-xs font-black uppercase tracking-wider">Control Obra</h1>
+          </div>
+          <button 
+            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+            className="p-1 text-[#94A3B8] hover:text-[#E2E8F0]"
+          >
+            {mobileMenuOpen ? <X className="h-6 w-6" /> : <Menu className="h-6 w-6" />}
+          </button>
+        </div>
+
+        {/* Desplegable de Navegación Móvil */}
+        {mobileMenuOpen && (
+          <nav className="bg-[#11141B] border-t border-[#1E293B] py-3 px-4 flex flex-col space-y-2 text-xs font-bold">
+            <button
+              onClick={() => {
+                setActiveSection('dashboard');
+                setMobileMenuOpen(false);
+              }}
+              className={`text-left p-2.5 rounded-lg ${activeSection === 'dashboard' ? 'bg-blue-600 text-white' : 'text-[#94A3B8]'}`}
+            >
+              📊 Dashboard
+            </button>
+            <button
+              onClick={() => {
+                setActiveSection('tabla');
+                setMobileMenuOpen(false);
+              }}
+              className={`text-left p-2.5 rounded-lg flex items-center justify-between ${activeSection === 'tabla' ? 'bg-blue-600 text-white' : 'text-[#94A3B8]'}`}
+            >
+              <span>📂 Actividades ({sidebarMetrics.total})</span>
+            </button>
+            <button
+              onClick={() => {
+                setSelectedActivityId(null);
+                setActiveSection('formulario');
+                setMobileMenuOpen(false);
+              }}
+              className={`text-left p-2.5 rounded-lg ${activeSection === 'formulario' && !selectedActivityId ? 'bg-blue-600 text-white' : 'text-[#94A3B8]'}`}
+            >
+              ➕ Nueva Actividad
+            </button>
+            <button
+              onClick={() => {
+                setActiveSection('cronograma');
+                setMobileMenuOpen(false);
+              }}
+              className={`text-left p-2.5 rounded-lg ${activeSection === 'cronograma' ? 'bg-blue-600 text-white' : 'text-[#94A3B8]'}`}
+            >
+              📅 Cronograma Gantt
+            </button>
+            <button
+              onClick={() => {
+                setActiveSection('configuracion');
+                setMobileMenuOpen(false);
+              }}
+              className={`text-left p-2.5 rounded-lg ${activeSection === 'configuracion' ? 'bg-blue-600 text-white' : 'text-[#94A3B8]'}`}
+            >
+              ⚙️ Configuración
+            </button>
+          </nav>
+        )}
+      </header>
+
+      {/* 3. VISUALIZADOR DE SECCIÓN ACTIVA (VIEWPORT) */}
+      <main className="flex-1 p-4 md:p-8 overflow-y-auto" id="main-viewport">
+        {activeSection === 'dashboard' && (
+          <DashboardView 
+            actividades={actividades} 
+            referenceDate={referenceDate}
+            onNavigate={setActiveSection}
+            setSelectedActivityId={setSelectedActivityId}
+          />
+        )}
+
+        {activeSection === 'tabla' && (
+          <TableView 
+            actividades={actividades}
+            referenceDate={referenceDate}
+            onEditActivity={handleStartEditActivity}
+            onDeleteActivity={handleDeleteActivity}
+            onNavigate={setActiveSection}
+          />
+        )}
+
+        {activeSection === 'formulario' && (
+          <FormView 
+            selectedActivityId={selectedActivityId}
+            onSaveActivity={handleSaveActivity}
+            actividades={actividades}
+            onCancelEdit={handleCancelEdit}
+            referenceDate={referenceDate}
+          />
+        )}
+
+        {activeSection === 'cronograma' && (
+          <GanttView 
+            actividades={actividades}
+            referenceDate={referenceDate}
+          />
+        )}
+
+        {activeSection === 'configuracion' && (
+          <ConfigView 
+            referenceDate={referenceDate}
+            onUpdateReferenceDate={handleUpdateReferenceDate}
+            onResetToDemoData={handleResetToDemoData}
+            onClearData={handleClearData}
+            onImportData={handleImportData}
+            actividades={actividades}
+          />
+        )}
+      </main>
+
+    </div>
+  );
+}
